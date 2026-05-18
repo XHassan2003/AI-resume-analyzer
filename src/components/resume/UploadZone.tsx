@@ -5,18 +5,44 @@ import { motion } from "framer-motion";
 interface Props {
   file: File | null;
   onFile: (file: File | null) => void;
+  error?: string;
 }
 
-export function UploadZone({ file, onFile }: Props) {
+export function UploadZone({ file, onFile, error }: Props) {
   const [drag, setDrag] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+
+  const validateFile = (file: File) => {
+    const allowedTypes = [".pdf", ".docx", ".doc", ".txt"];
+    const lower = file.name.toLowerCase();
+
+    const validType = allowedTypes.some((type) =>
+      lower.endsWith(type)
+    );
+
+    if (!validType) {
+      alert("Only PDF, DOCX, DOC, or TXT files are allowed.");
+      return false;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert("File size must be under 10MB.");
+      return false;
+    }
+
+    return true;
+  };
 
   const onDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault();
       setDrag(false);
+
       const f = e.dataTransfer.files?.[0];
-      if (f) onFile(f);
+
+      if (f && validateFile(f)) {
+        onFile(f);
+      }
     },
     [onFile]
   );
@@ -32,13 +58,18 @@ export function UploadZone({ file, onFile }: Props) {
           <div className="rounded-xl bg-primary/15 p-3 text-primary">
             <FileText className="h-6 w-6" />
           </div>
+
           <div>
-            <p className="font-medium text-foreground">{file.name}</p>
+            <p className="font-medium text-foreground">
+              {file.name}
+            </p>
+
             <p className="text-sm text-muted-foreground">
               {(file.size / 1024).toFixed(1)} KB
             </p>
           </div>
         </div>
+
         <button
           onClick={() => onFile(null)}
           className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -68,18 +99,33 @@ export function UploadZone({ file, onFile }: Props) {
       <div className="mb-4 rounded-2xl bg-primary/15 p-4 text-primary">
         <Upload className="h-8 w-8" />
       </div>
+
       <p className="text-lg font-semibold text-foreground">
         Drop your resume here
       </p>
+
       <p className="mt-1 text-sm text-muted-foreground">
         PDF, DOCX, or TXT · up to 10 MB
       </p>
+
+      {error && (
+        <p className="mt-3 text-sm font-medium text-red-500">
+          {error}
+        </p>
+      )}
+
       <input
         ref={input}
         type="file"
         accept=".pdf,.docx,.doc,.txt"
         className="hidden"
-        onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+
+          if (file && validateFile(file)) {
+            onFile(file);
+          }
+        }}
       />
     </div>
   );

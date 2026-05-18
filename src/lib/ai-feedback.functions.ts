@@ -1,5 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 const InputSchema = z.object({
   resumeText: z.string().min(50).max(40000),
@@ -13,70 +18,170 @@ export type AiFeedback = {
   jdAlignment?: string;
 };
 
-export const generateAiFeedback = createServerFn({ method: "POST" })
+/**
+ * Detect whether uploaded text looks like a real resume/CV
+ */
+function isResumeText(text: string): boolean {
+  const normalized = text.toLowerCase();
+
+  const resumeKeywords = [
+    "experience",
+    "education",
+    "skills",
+    "projects",
+    "work history",
+    "employment",
+    "summary",
+    "objective",
+    "certifications",
+    "internship",
+    "linkedin",
+    "technical skills",
+    "achievements",
+    "developer",
+    "engineer",
+    "manager",
+    "resume",
+    "cv",
+  ];
+
+  let matches = 0;
+
+  for (const keyword of resumeKeywords) {
+    if (normalized.includes(keyword)) {
+      matches++;
+    }
+  }
+
+  // Reject very short documents
+  if (normalized.length < 200) {
+    return false;
+  }
+
+  // Require at least 3 resume-related keywords
+  return matches >= 3;
+}
+
+export const generateAiFeedback = createServerFn({
+  method: "POST",
+})
   .inputValidator((input: unknown) => InputSchema.parse(input))
-  .handler(async ({ data }): Promise<{ feedback: AiFeedback | null; error: string | null }> => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) return { feedback: null, error: "AI is not configured on the server." };
+  .handler(
+    async ({
+      data,
+    }): Promise<{
+      feedback: AiFeedback | null;
+      error: string | null;
+    }> => {
+      try {
+        /**
+         * Validate uploaded document
+         */
+        if (!isResumeText(data.resumeText)) {
+          return {
+            feedback: null,
+            error: "Please upload a valid resume or CV document.",
+          };
+        }
 
-    const system =
-      "You are an expert technical recruiter and resume coach. Analyze the user's resume " +
-      "and (optionally) the target job description. Return concise, concrete, actionable feedback. " +
-      "Be specific — reference details from the resume. Avoid generic advice.";
+        /**
+         * Check OpenAI API key
+         */
+        if (!process.env.OPENAI_API_KEY) {
+          return {
+            feedback: null,
+            error: "OpenAI API key is missing.",
+          };
+        }
 
-    const userPrompt = [
-      `RESUME:\n${data.resumeText.slice(0, 16000)}`,
-      data.jobDescription
-        ? `\n\nJOB DESCRIPTION:\n${data.jobDescription.slice(0, 6000)}`
-        : "",
-      "\n\nReturn JSON only matching this shape:",
-      `{
+        const system =
+          "You are an expert technical recruiter and resume coach. " +
+          "Analyze the user's resume and optional job description. " +
+          "Provide concise, ATS-focused, actionable feedback. " +
+          "Be specific and reference actual resume details.";
+
+        const userPrompt = [
+          `RESUME:\n${data.resumeText.slice(0, 16000)}`,
+
+          data.jobDescription
+            ? `\n\nJOB DESCRIPTION:\n${data.jobDescription.slice(0, 6000)}`
+            : "",
+
+          "\n\nReturn ONLY valid JSON in this exact format:",
+
+          `{
   "summary": "2-3 sentence overall assessment",
   "strengths": ["3-6 specific strengths"],
-  "improvements": ["3-6 specific, actionable improvements"],
-  "jdAlignment": "1-2 sentences on fit vs the job (omit if no JD)"
+  "improvements": ["3-6 actionable improvements"],
+  "jdAlignment": "1-2 sentences about job fit"
 }`,
-    ].join("");
+        ].join("");
 
-    try {
-      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "google/gemini-3-flash-preview",
+        /**
+         * OpenAI Request
+         */
+        const response = await openai.chat.completions.create({
+          model: "gpt-4.1-mini",
+
           messages: [
-            { role: "system", content: system },
-            { role: "user", content: userPrompt },
+            {
+              role: "system",
+              content: system,
+            },
+            {
+              role: "user",
+              content: userPrompt,
+            },
           ],
-          response_format: { type: "json_object" },
-        }),
-      });
 
-      if (!res.ok) {
-        if (res.status === 429) return { feedback: null, error: "AI is rate-limited. Try again in a moment." };
-        if (res.status === 402) return { feedback: null, error: "AI credits exhausted. Add credits in workspace settings." };
-        const body = await res.text();
-        console.error("AI gateway error", res.status, body);
-        return { feedback: null, error: `AI request failed (${res.status}).` };
+          response_format: {
+            type: "json_object",
+          },
+
+          temperature: 0.7,
+        });
+
+        const content =
+          response.choices[0]?.message?.content;
+
+        if (!content) {
+          return {
+            feedback: null,
+            error: "No AI response received.",
+          };
+        }
+
+        /**
+         * Parse AI JSON
+         */
+        const parsed = JSON.parse(content) as AiFeedback;
+
+        return {
+          feedback: {
+            summary: String(parsed.summary ?? ""),
+
+            strengths: Array.isArray(parsed.strengths)
+              ? parsed.strengths.map(String)
+              : [],
+
+            improvements: Array.isArray(parsed.improvements)
+              ? parsed.improvements.map(String)
+              : [],
+
+            jdAlignment: parsed.jdAlignment
+              ? String(parsed.jdAlignment)
+              : undefined,
+          },
+
+          error: null,
+        };
+      } catch (error) {
+        console.error("OpenAI Error:", error);
+
+        return {
+          feedback: null,
+          error: "Failed to generate AI feedback.",
+        };
       }
-
-      const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-      const content = json.choices?.[0]?.message?.content ?? "";
-      const parsed = JSON.parse(content) as AiFeedback;
-      return {
-        feedback: {
-          summary: String(parsed.summary ?? ""),
-          strengths: Array.isArray(parsed.strengths) ? parsed.strengths.map(String) : [],
-          improvements: Array.isArray(parsed.improvements) ? parsed.improvements.map(String) : [],
-          jdAlignment: parsed.jdAlignment ? String(parsed.jdAlignment) : undefined,
-        },
-        error: null,
-      };
-    } catch (e) {
-      console.error("AI feedback failure", e);
-      return { feedback: null, error: "AI feedback could not be generated." };
     }
-  });
+  );

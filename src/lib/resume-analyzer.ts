@@ -16,6 +16,7 @@ export interface AnalysisResult {
   matched: string[];
   missing: string[];
   matchScore: number;
+  rawText: string;
   categories: { label: string; score: number }[];
 }
 
@@ -145,6 +146,7 @@ export function analyze(text: string, jobDescription: string): AnalysisResult {
     missing: missing.slice(0, 20),
     matchScore,
     categories,
+    rawText: text,
   };
 }
 

@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { CheckCircle2, AlertCircle, Mail, Phone, Link as LinkIcon, Sparkles } from "lucide-react";
+import { CheckCircle2, AlertCircle, Mail, Phone, Link as LinkIcon } from "lucide-react";
 import type { AnalysisResult } from "@/lib/resume-analyzer";
 import { ScoreRing } from "./ScoreRing";
 import {
@@ -29,7 +29,6 @@ export function AnalysisReport({ result, hasJD }: { result: AnalysisResult; hasJ
         <ScoreRing score={result.score} />
         <div className="flex-1 space-y-4 text-center md:text-left">
           <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-            <Sparkles className="h-3.5 w-3.5" />
             AI Analysis Complete
           </div>
           <h2 className="text-3xl font-bold text-foreground">
